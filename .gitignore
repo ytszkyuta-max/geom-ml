@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# モデル重み（大容量）
+*.pt
+*.pth
+*.joblib
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# データキャッシュ
+data/
+*.parquet
+*.nc
+*.zarr/
+
+# 開発ログ
+notes/
