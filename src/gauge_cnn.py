@@ -333,33 +333,43 @@ class IcosGaugeCNNGeneral(nn.Module):
     """
 
     def __init__(self, c_in: int, c_hidden: int, n_types: int, n_out: int,
-                 nb_idx: torch.Tensor, nb_ang: torch.Tensor, nb_mask: torch.Tensor):
+                 nb_idx: torch.Tensor, nb_ang: torch.Tensor, nb_mask: torch.Tensor,
+                 n_time_feats: int = 0):
         super().__init__()
         self.register_buffer('nb_mask', nb_mask)
+        self.n_time_feats = n_time_feats
 
         inv_dim = n_types * c_hidden
 
         self.conv1 = GaugeConv(c_in,    c_hidden, n_types, nb_idx, nb_ang)
         self.norm1 = GaugeNorm(n_types, c_hidden)
         self.pool1 = InvariantPool()
-        self.ln1   = nn.LayerNorm(inv_dim)  # InvariantPool の二乗でスケールが爆発しないよう正規化
+        self.ln1   = nn.LayerNorm(inv_dim)
 
         self.conv2 = GaugeConv(inv_dim, c_hidden, n_types, nb_idx, nb_ang)
         self.norm2 = GaugeNorm(n_types, c_hidden)
         self.pool2 = InvariantPool()
         self.ln2   = nn.LayerNorm(inv_dim)
 
-        self.head  = nn.Linear(inv_dim, n_out)
+        # 時刻特徴量はGauge層をバイパスしてhead直前でconcat
+        self.head  = nn.Linear(inv_dim + n_time_feats, n_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (batch, V, c_in)
+            x: (batch, V, c_in + n_time_feats)  末尾n_time_feats列が時刻特徴量
         Returns:
             (batch, V, n_out)
         """
-        x = self.ln1(self.pool1(self.norm1(self.conv1(x, self.nb_mask))))
-        x = self.ln2(self.pool2(self.norm2(self.conv2(x, self.nb_mask))))
+        if self.n_time_feats > 0:
+            x_geo  = x[..., :-self.n_time_feats]   # 気象変数のみGauge層へ
+            t_feat = x[..., -self.n_time_feats:]    # 時刻特徴量はバイパス
+        else:
+            x_geo  = x
+        x = self.ln1(self.pool1(self.norm1(self.conv1(x_geo, self.nb_mask))))
+        x = self.ln2(self.pool2(self.norm2(self.conv2(x,     self.nb_mask))))
+        if self.n_time_feats > 0:
+            x = torch.cat([x, t_feat], dim=-1)     # head直前でconcat
         return self.head(x)
 
 
