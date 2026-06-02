@@ -22,7 +22,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from icosahedron import (build_icosahedron, compute_local_frames,
-                         compute_connection_angles, build_adjacency)
+                         compute_connection_angles, build_adjacency,
+                         compute_plaquette_holonomy, scatter_holonomy_to_vertices)
 
 
 # ============================================================
@@ -62,6 +63,59 @@ def build_gauge_data(device=None):
         nb_ang = nb_ang.to(device)
 
     return nb_idx, nb_ang, verts, faces
+
+
+def compute_holonomy_features(faces: np.ndarray, edges: np.ndarray,
+                              angles: np.ndarray, num_vertices: int,
+                              device=None) -> torch.Tensor:
+    """
+    プラケットのホロノミー（曲率）を頂点ベースのゲージ不変特徴量にする。
+
+    格子ゲージ理論（Harlow QFT3 §8）の Wilson プラケット = 場の強さ F_μν を、
+    GaugeCNN の type-0 入力に concat できる形 [cos Θ̄_v, sin Θ̄_v] で返す。
+
+    Returns: holo_feat (V, 2) float Tensor  ゲージ不変な曲率特徴量
+    """
+    holonomy = compute_plaquette_holonomy(faces, edges, angles)        # (F,)
+    vert_curv = scatter_holonomy_to_vertices(faces, holonomy, num_vertices)  # (V,2)
+    holo_feat = torch.tensor(vert_curv, dtype=torch.float32)
+    if device is not None:
+        holo_feat = holo_feat.to(device)
+    return holo_feat
+
+
+def build_gauge_data_with_holonomy(device=None):
+    """
+    build_gauge_data に加えて、プラケットのホロノミー曲率特徴量も返す拡張版。
+
+    Returns:
+      nb_idx    : (12, 5) 隣接頂点インデックス
+      nb_ang    : (12, 5) 接続角
+      holo_feat : (12, 2) ゲージ不変な曲率特徴量 [cos Θ̄, sin Θ̄]
+      verts, faces
+    """
+    verts, faces, edges = build_icosahedron()
+    frames = compute_local_frames(verts)
+    angles = compute_connection_angles(verts, edges, frames)
+    adj    = build_adjacency(verts, edges, angles)
+
+    V = len(verts)
+    nb_idx_np = np.zeros((V, 5), dtype=np.int64)
+    nb_ang_np = np.zeros((V, 5), dtype=np.float32)
+    for v in range(V):
+        for k, (w, alpha) in enumerate(adj[v]):
+            nb_idx_np[v, k] = w
+            nb_ang_np[v, k] = alpha
+
+    nb_idx = torch.tensor(nb_idx_np, dtype=torch.long)
+    nb_ang = torch.tensor(nb_ang_np, dtype=torch.float32)
+    holo_feat = compute_holonomy_features(faces, edges, angles, V, device)
+
+    if device is not None:
+        nb_idx = nb_idx.to(device)
+        nb_ang = nb_ang.to(device)
+
+    return nb_idx, nb_ang, holo_feat, verts, faces
 
 
 # ============================================================

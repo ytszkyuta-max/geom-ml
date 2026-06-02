@@ -197,6 +197,56 @@ def test_icos_gauge_cnn_invariance():
 
 
 # ────────────────────────────────────────────────────────────────
+# T5: プラケットのホロノミー（曲率特徴量）のゲージ不変性
+# ────────────────────────────────────────────────────────────────
+
+def test_holonomy_gauge_invariance():
+    """
+    T5a: プラケットのホロノミー Θ_f は任意のゲージ変換に対して不変
+    T5b: 正二十面体（細分なし）のホロノミー = 球面過剰角 4π/20 = 36°
+         （Harlow QFT3 §8: Wilson プラケット = 曲率。ガウス・ボネ定理と整合）
+    """
+    print("=== T5: プラケットホロノミー（曲率）のゲージ不変性 ===")
+    from icosahedron import (build_icosahedron, compute_local_frames,
+                             compute_connection_angles, compute_plaquette_holonomy)
+
+    verts, faces, edges = build_icosahedron()
+    frames = compute_local_frames(verts)
+    angles = compute_connection_angles(verts, edges, frames)
+    holo_orig = compute_plaquette_holonomy(faces, edges, angles)
+
+    # T5b: 全面が 36° か（= 4π/20、球面の全曲率 4π を 20 面で等分）
+    expected = np.radians(36.0)
+    err_curv = np.abs(np.abs(holo_orig) - expected).max()
+    ok_curv = err_curv < 1e-9
+    print(f"  T5b 全面ホロノミー = 36°（球面過剰角）誤差 = {err_curv:.2e}  "
+          f"{'✓' if ok_curv else '✗'}")
+    total = np.degrees(np.abs(holo_orig).sum())
+    print(f"      全20面の合計 = {total:.1f}°（理論値 720° = 4π = 全曲率）")
+
+    # T5a: ランダムなゲージ変換（全頂点を独立にランダム回転）を施しても Θ_f 不変
+    rng = np.random.default_rng(0)
+    phi = rng.uniform(-np.pi, np.pi, size=len(verts))
+
+    # ゲージ変換: 各頂点 v の出辺 α_{v→·} → α_{v→·} - φ_v
+    angles_rot = angles.copy()
+    for e_idx, (v, w) in enumerate(edges):
+        angles_rot[e_idx, 0] -= phi[int(v)]   # α_{v→w} -= φ_v
+        angles_rot[e_idx, 1] -= phi[int(w)]   # α_{w→v} -= φ_w
+
+    holo_rot = compute_plaquette_holonomy(faces, edges, angles_rot)
+
+    def wrap(x):
+        return (x + np.pi) % (2 * np.pi) - np.pi
+    err_inv = np.abs(wrap(holo_rot - holo_orig)).max()
+    ok_inv = err_inv < 1e-9
+    print(f"  T5a ランダムゲージ変換後のホロノミー不変性 誤差 = {err_inv:.2e}  "
+          f"{'✓' if ok_inv else '✗'}")
+
+    return ok_curv and ok_inv
+
+
+# ────────────────────────────────────────────────────────────────
 # main
 # ────────────────────────────────────────────────────────────────
 
@@ -205,6 +255,7 @@ if __name__ == '__main__':
     results.append(test_gauge_conv_equivariance())
     results.append(test_gauge_conv_type_n_equivariance())
     results.append(test_icos_gauge_cnn_invariance())
+    results.append(test_holonomy_gauge_invariance())
 
     print()
     if all(results):

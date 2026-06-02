@@ -180,6 +180,80 @@ def compute_connection_angles(vertices: np.ndarray,
     return angles
 
 
+def compute_plaquette_holonomy(faces: np.ndarray,
+                               edges: np.ndarray,
+                               angles: np.ndarray) -> np.ndarray:
+    """
+    各三角面（プラケット）のホロノミー Θ_f を計算する。
+
+    格子ゲージ理論（Harlow QFT3 §8.1, eq.8.35）の Wilson プラケットの U(1) 版。
+    面を一周したときのフレームの累積回転 = ゲージ場の曲率（場の強さ F_μν の積分）。
+
+    ────────────────────────────────────────────────────────────
+    なぜ単純な接続角の和ではダメか
+    ────────────────────────────────────────────────────────────
+    α_{vw} は各頂点 v の「局所フレーム基準」で測った方位角。
+    異なる頂点では基準フレームが違うので、α をそのまま足してもゲージ不変でない。
+    辺 v→w を渡るときのフレームのねじれ（並行移動）は
+        twist(v,w) = wrap(α_{wv} - α_{vw} + π)
+    で与えられる（w から見た v 方向と v から見た w 方向は逆向き=+π、
+    その差が局所フレーム間の相対回転）。これを一周足すと曲率になる。
+
+    ゲージ不変性:
+      フレームを φ_v 回転すると α_{vw} → α_{vw} - φ_v, α_{wv} → α_{wv} - φ_w。
+      twist(v,w) = (α_{wv}-φ_w) - (α_{vw}-φ_v) + π。
+      一周 v0→v1→v2→v0 で足すと φ の寄与が打ち消し合い、Θ_f はゲージ不変。
+
+    Returns: holonomy shape (F,)  各面のホロノミー Θ_f ∈ (-π, π]
+      正二十面体（細分なし）では全面 Θ_f = 36°（= 球面過剰角 = 4π/20）。
+    """
+    # 有向辺 → 接続角の辞書
+    amap = {}
+    for e_idx, (v, w) in enumerate(edges):
+        amap[(int(v), int(w))] = float(angles[e_idx, 0])  # v→w
+        amap[(int(w), int(v))] = float(angles[e_idx, 1])  # w→v
+
+    def wrap(x):
+        return (x + np.pi) % (2 * np.pi) - np.pi
+
+    def twist(s, d):
+        # 辺 s→d を渡るときの局所フレームの相対回転
+        return wrap(amap[(d, s)] - amap[(s, d)] + np.pi)
+
+    F = len(faces)
+    holonomy = np.zeros(F, dtype=np.float64)
+    for fi, (a, b, c) in enumerate(faces):
+        a, b, c = int(a), int(b), int(c)
+        holonomy[fi] = wrap(twist(a, b) + twist(b, c) + twist(c, a))
+
+    return holonomy
+
+
+def scatter_holonomy_to_vertices(faces: np.ndarray,
+                                 holonomy: np.ndarray,
+                                 num_vertices: int) -> np.ndarray:
+    """
+    面ごとのホロノミー Θ_f を、各頂点に集約する（頂点特徴量にするため）。
+
+    頂点 v の曲率特徴 = v を含む面の Θ_f の平均（隣接プラケットの平均曲率）。
+    GaugeCNN の入力は頂点ベースなので、面の量を頂点に落とす必要がある。
+
+    Returns: vertex_curv shape (V, 2)  [cos Θ̄_v, sin Θ̄_v]
+      ゲージ不変スカラーとして type-0 特徴量に concat できる。
+    """
+    V = num_vertices
+    acc_cos = np.zeros(V)
+    acc_sin = np.zeros(V)
+    count   = np.zeros(V)
+    for fi, (a, b, c) in enumerate(faces):
+        for v in (int(a), int(b), int(c)):
+            acc_cos[v] += np.cos(holonomy[fi])
+            acc_sin[v] += np.sin(holonomy[fi])
+            count[v]   += 1
+    count = np.maximum(count, 1)
+    return np.stack([acc_cos / count, acc_sin / count], axis=1).astype(np.float32)
+
+
 def build_adjacency(vertices: np.ndarray,
                      edges: np.ndarray,
                      angles: np.ndarray) -> list:
